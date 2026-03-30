@@ -1,0 +1,27 @@
+# Data files
+*.dat
+*.mat
+*.npz
+*.csv
+output/
+data/
+tests/mock_data/
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+env/
+.venv/
+
+# OS hidden files
+.DS_Store

@@ -1,0 +1,25 @@
+# Ignore large raw and processed data
+CSI/
+BVP/
+Gait_Dataset/
+python_pipeline/output/
+
+# Archives and raw captures
+*.zip
+*.dat
+*.pcap
+
+# Model artifacts
+*.h5
+*.npz
+*.mat
+
+# Python / tooling noise
+__pycache__/
+*.pyc
+.idea/
+.vs/
+.DS_Store
+
+# IDE / notebook checkpoints
+.ipynb_checkpoints/
