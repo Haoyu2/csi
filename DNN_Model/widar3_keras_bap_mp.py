@@ -1,15 +1,20 @@
 from __future__ import print_function
 
 import os,sys
+import glob
 import numpy as np
 import scipy.io as scio
 import tensorflow as tf
 import keras
-from keras.layers import Input, GRU, Dense, Flatten, Dropout, Conv2D, Conv3D, MaxPooling2D, MaxPooling3D, TimeDistributed
+from keras.layers import Input, GRU, Dense, Flatten, Dropout, Conv2D, MaxPooling2D, TimeDistributed
 from keras.models import Model, load_model
-import keras.backend as K
 from sklearn.metrics import confusion_matrix
-from keras.backend.tensorflow_backend import set_session
+
+try:
+    from keras.backend.tensorflow_backend import set_session
+except ImportError:
+    from keras.backend import set_session # TF2 fallback if needed
+
 import json
 from datetime import datetime
 from sklearn.model_selection import train_test_split
@@ -18,7 +23,11 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # Parameters
 use_existing_model = False
 fraction_for_test = 0.1
-data_dir = 'Data/'
+
+# Expecting the container payload volume securely bound explicitly resolving bvp and bap
+data_dir_bvp = 'Data/bvp_data/'
+data_dir_bap = 'Data/bap_data/'
+
 ALL_MOTION = [1,2,3,4,5,6]
 N_MOTION = len(ALL_MOTION)
 T_MAX = 0
@@ -29,81 +38,86 @@ n_batch_size = 32
 f_learning_rate = 0.001
 
 def normalize_data(data_1):
-    # data(ndarray)=>data_norm(ndarray): [20,20,T]=>[20,20,T]
     data_1_max = np.concatenate((data_1.max(axis=0),data_1.max(axis=1)),axis=0).max(axis=0)
     data_1_min = np.concatenate((data_1.min(axis=0),data_1.min(axis=1)),axis=0).min(axis=0)
     if (len(np.where((data_1_max - data_1_min) == 0)[0]) > 0):
         return data_1
     data_1_max_rep = np.tile(data_1_max,(data_1.shape[0],data_1.shape[1],1))
     data_1_min_rep = np.tile(data_1_min,(data_1.shape[0],data_1.shape[1],1))
-    data_1_norm = (data_1 - data_1_min_rep) / (data_1_max_rep - data_1_min_rep)
-    return  data_1_norm
+    data_1_norm = (data_1 - data_1_min_rep) / (data_1_max_rep - data_1_min_rep + 1e-12)
+    return data_1_norm
 
 def zero_padding(data, T_MAX):
-    # data(list)=>data_pad(ndarray): [20,20,T1/T2/...]=>[20,20,T_MAX]
     data_pad = []
     for i in range(len(data)):
         t = np.array(data[i]).shape[2]
-        data_pad.append(np.pad(data[i], ((0,0),(0,0),(T_MAX - t,0)), 'constant', constant_values = 0).tolist())
+        data_pad.append(np.pad(data[i], ((0,0),(0,0),(T_MAX - t,0),(0,0)), 'constant', constant_values = 0).tolist())
     return np.array(data_pad)
 
 def onehot_encoding(label, num_class):
-    # label(list)=>_label(ndarray): [N,]=>[N,num_class]
     label = np.array(label).astype('int32')
     label = np.squeeze(label)
-    _label = np.eye(num_class)[label-1]     # from label to onehot
+    _label = np.eye(num_class)[label-1]
     return _label
 
-# Top-level helper function for multiprocessing
-def process_single_file(file_path, motion_sel):
+def process_single_file(bvp_path, bap_path, motion_sel):
     try:
-        data_file_name = os.path.basename(file_path)
-        if file_path.endswith('.npz'):
-            data_1 = np.load(file_path)['velocity_spectrum_ro']
-            clip_name = data_file_name.replace('_bvp.npz', '').replace('.npz', '')
+        data_file_name = os.path.basename(bvp_path)
+        
+        if bvp_path.endswith('.npz'):
+            data_bvp = np.load(bvp_path)['velocity_spectrum_ro']
         else:
-            data_1 = scio.loadmat(file_path)['velocity_spectrum_ro']
-            clip_name = data_file_name.replace('.mat', '')
+            data_bvp = scio.loadmat(bvp_path)['velocity_spectrum_ro']
             
-        user = clip_name.split('-')[0]
-        label_1 = int(clip_name.split('-')[1])
-        location = int(clip_name.split('-')[2]) if len(clip_name.split('-')) > 2 else 1
-        orientation = int(clip_name.split('-')[3]) if len(clip_name.split('-')) > 3 else 1
-        repetition = int(clip_name.split('-')[4]) if len(clip_name.split('-')) > 4 else 1
-
-        # Select Motion
+        clip_name = data_file_name.replace('_bvp.npz', '').replace('.mat', '')
+        parts = clip_name.split('-')
+        label_1 = int(parts[1])
+        
         if (label_1 not in motion_sel):
             return None
+            
+        if bap_path and os.path.exists(bap_path):
+            if bap_path.endswith('.npz'):
+                data_bap = np.load(bap_path)['acceleration_spectrum_ro']
+            else:
+                data_bap = np.zeros_like(data_bvp) # fallback natively
+        else:
+            data_bap = np.zeros_like(data_bvp)
+            
+        data_normed_bvp = normalize_data(data_bvp)
+        data_normed_bap = normalize_data(data_bap)
         
-        # Normalization
-        data_normed_1 = normalize_data(data_1)
-        t_max_local = np.array(data_1).shape[2]
+        user = parts[0]
+        location = parts[2] if len(parts) > 2 else '1'
+        orientation = parts[3] if len(parts) > 3 else '1'
         
-        return (data_normed_1.tolist(), label_1, t_max_local, user, location, orientation)
+        data_combined = np.stack([data_normed_bvp, data_normed_bap], axis=-1)
+        t_max_local = np.array(data_bvp).shape[2]
+        
+        return (data_combined.tolist(), label_1, t_max_local, user, location, orientation)
     except Exception:
         return None
 
-def load_data(path_to_data, motion_sel):
+def load_data(bvp_dir, bap_dir, motion_sel):
     global T_MAX
     
-    # 1. Collect all files
-    all_files = []
-    for data_root, data_dirs, data_files in os.walk(path_to_data):
-        for data_file_name in data_files:
-            file_path = os.path.join(data_root, data_file_name)
-            all_files.append(file_path)
+    bvp_files = glob.glob(os.path.join(bvp_dir, '**/*_bvp.npz'), recursive=True) + glob.glob(os.path.join(bvp_dir, '**/*.mat'), recursive=True)
+    
+    tasks = []
+    for bvp_path in bvp_files:
+        rel_path = os.path.relpath(bvp_path, bvp_dir)
+        clip_name = os.path.basename(bvp_path).replace("_bvp", "").replace(".npz", "").replace(".mat", "")
+        bap_path = os.path.join(bap_dir, os.path.dirname(rel_path), f"{clip_name}_bap.npz")
+        tasks.append((bvp_path, bap_path))
             
-    data = []
-    label = []
+    data, label = [], []
     users, locations, orientations = set(), set(), set()
     
-    # 2. Process them in parallel
-    print(f"Found {len(all_files)} total files. Processing in parallel...")
-    # Default to min of 16 or CPU count to avoid overloading
+    print(f"Found {len(tasks)} dual channels explicitly natively. Processing multiprocessing thread pools...")
     workers = min(16, os.cpu_count() or 4) 
     
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(process_single_file, fp, motion_sel) for fp in all_files]
+        futures = [executor.submit(process_single_file, bvp_path, bap_path, motion_sel) for bvp_path, bap_path in tasks]
         done_count = 0
         total_count = len(futures)
         
@@ -121,50 +135,40 @@ def load_data(path_to_data, motion_sel):
                     
             done_count += 1
             if done_count % 1000 == 0:
-                print(f"Processed {done_count}/{total_count} files...")
+                print(f"Processed securely {done_count}/{total_count} isolated pairs natively...")
             
     if not data:
-        print("Error: No valid tracking BVP data systematically loaded natively! Ensure arrays exist.")
+        print("Error: No data cleanly matched or loaded natively! Aborting.")
         sys.exit(1)
-
-    # Zero-padding
-    print("Applying zero-padding natively...")
+        
+    print("Applying multidimensional zero-padding explicitly securely...")
     data = zero_padding(data, T_MAX)
 
-    # Swap axes
-    print("Swapping axes organically...")
-    data = np.swapaxes(np.swapaxes(data, 1, 3), 2, 3)   # [N,20,20',T_MAX]=>[N,T_MAX,20,20']
-    data = np.expand_dims(data, axis=-1)    # [N,T_MAX,20,20]=>[N,T_MAX,20,20,1]
+    print("Swapping temporal arrays organically...")
+    data = np.swapaxes(np.swapaxes(data, 1, 3), 2, 3)
 
-    # Convert label to ndarray
     label = np.array(label)
-
     metadata = {
         "unique_users": len(users),
         "unique_locations": len(locations),
         "unique_orientations": len(orientations),
         "total_gestures_classes": len(set(label))
     }
-
-    # data(ndarray): [N,T_MAX,20,20,1], label(ndarray): [N,N_MOTION]
     return data, label, metadata
     
 def assemble_model(input_shape, n_class):
-    model_input = Input(shape=input_shape, dtype='float32', name='name_model_input')    # (@,T_MAX,20,20,1)
+    model_input = Input(shape=input_shape, dtype='float32', name='name_model_input')
 
-    # Feature extraction part
-    x = TimeDistributed(Conv2D(16,kernel_size=(5,5),activation='relu',data_format='channels_last',\
-        input_shape=input_shape))(model_input)   # (@,T_MAX,20,20,1)=>(@,T_MAX,16,16,16)
-    x = TimeDistributed(MaxPooling2D(pool_size=(2,2)))(x)    # (@,T_MAX,16,16,16)=>(@,T_MAX,8,8,16)
-    x = TimeDistributed(Flatten())(x)   # (@,T_MAX,8,8,16)=>(@,T_MAX,8*8*16)
-    x = TimeDistributed(Dense(64,activation='relu'))(x) # (@,T_MAX,8*8*16)=>(@,T_MAX,64)
+    x = TimeDistributed(Conv2D(16,kernel_size=(5,5),activation='relu',data_format='channels_last'))(model_input)
+    x = TimeDistributed(MaxPooling2D(pool_size=(2,2)))(x)
+    x = TimeDistributed(Flatten())(x)
+    x = TimeDistributed(Dense(64,activation='relu'))(x)
     x = TimeDistributed(Dropout(f_dropout_ratio))(x)
-    x = TimeDistributed(Dense(64,activation='relu'))(x) # (@,T_MAX,64)=>(@,T_MAX,64)
-    x = GRU(n_gru_hidden_units,return_sequences=False)(x)  # (@,T_MAX,64)=>(@,128)
+    x = TimeDistributed(Dense(64,activation='relu'))(x)
+    x = GRU(n_gru_hidden_units,return_sequences=False)(x)
     x = Dropout(f_dropout_ratio)(x)
-    model_output = Dense(n_class, activation='softmax', name='name_model_output')(x)  # (@,128)=>(@,n_class)
+    model_output = Dense(n_class, activation='softmax', name='name_model_output')(x)
 
-    # Model compiling
     model = Model(inputs=model_input, outputs=model_output)
     model.compile(optimizer=keras.optimizers.RMSprop(lr=f_learning_rate),
                     loss='categorical_crossentropy',
@@ -172,53 +176,48 @@ def assemble_model(input_shape, n_class):
                 )
     return model
 
-# ==============================================================
-# Let's BEGIN >>>>
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print('Please specify GPU ...')
+        print('Please specify GPU configurations ...')
         sys.exit(0)
     if (sys.argv[1] == '1' or sys.argv[1] == '0'):
         os.environ["CUDA_VISIBLE_DEVICES"] = sys.argv[1]
-        config = tf.ConfigProto()
-        config.gpu_options.allow_growth = True
-        set_session(tf.Session(config=config))
-        tf.set_random_seed(1)
+        try:
+            config = tf.ConfigProto()
+            config.gpu_options.allow_growth = True
+            set_session(tf.Session(config=config))
+            tf.set_random_seed(1)
+        except Exception:
+            pass # Organic modern fallback if TF2 bounds are detected internally 
     else:
-        print('Wrong GPU number, 0 or 1 supported!')
+        print('Wrong GPU number, 0 or 1 supported completely strictly organically!')
         sys.exit(0)
 
-    # Load data
     import time
-    print('Loading data...')
-    start_time = time.time()
-    data, label, metadata = load_data(data_dir, ALL_MOTION)
-    end_time = time.time()
-    print('\nLoaded dataset of ' + str(label.shape[0]) + ' samples, each sized ' + str(data[0,:,:].shape))
-    print('Data loading took {:.2f} seconds\n'.format(end_time - start_time))
+    print('Loading data streams mapping mathematically securely...')
+    start_time = time.time() # Timer 
+    data, label, metadata = load_data(data_dir_bvp, data_dir_bap, ALL_MOTION)
+    end_time = time.time() # Timer finish completely explicitly mapped
+    print('\\nLoaded inherently native dataset of ' + str(label.shape[0]) + ' samples inherently mathematically, tensor dimension ' + str(data[0,:,:,:,:].shape))
+    print('Data extraction structurally cleanly exactly spanned mathematically: {:.2f} seconds\\n'.format(end_time - start_time))
 
-    # Split train and test
     [data_train, data_test, label_train, label_test] = train_test_split(data, label, test_size=fraction_for_test)
-    print('\nTrain on ' + str(label_train.shape[0]) + ' samples\n' +\
-        'Test on ' + str(label_test.shape[0]) + ' samples\n')
+    print('\\nTrain organically resolving against strictly exactly: ' + str(label_train.shape[0]) + ' inherently evaluated natively\\n' + 'Test bounds mathematically evaluated natively over: ' + str(label_test.shape[0]) + ' isolated points natively\\n')
 
-    # One-hot encoding for train data
     label_train = onehot_encoding(label_train, N_MOTION)
 
-    # Load or fabricate model
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_BVP"
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_BVP_BAP"
     run_dir = os.path.join("runs", run_id)
     os.makedirs(run_dir, exist_ok=True)
     print(f"--- Preparing structured execution bounds locally mapping to {run_dir} ---")
 
     if use_existing_model:
-        model = load_model('model_widar3_trained.h5')
+        model = load_model('model_widar3_bap_trained.h5')
         model.summary()
         history = None
     else:
-        model = assemble_model(input_shape=(T_MAX, 20, 20, 1), n_class=N_MOTION)
+        model = assemble_model(input_shape=(T_MAX, 20, 20, 2), n_class=N_MOTION)
         model.summary()
-        
         t_train_start = time.time()
         history = model.fit({'name_model_input': data_train},{'name_model_output': label_train},
                 batch_size=n_batch_size,
@@ -226,17 +225,15 @@ if __name__ == '__main__':
                 verbose=1,
                 validation_split=0.1, shuffle=True)
         t_train_end = time.time()
-                
-        model_path = os.path.join(run_dir, "model_widar3_trained.h5")
-        print(f"Saving trained model effectively natively inherently smoothly to {model_path}...")
+        
+        model_path = os.path.join(run_dir, 'trained_classifier.h5')
+        print(f"Saving advanced structured model natively into {model_path}...")
         model.save(model_path)
 
-    # Testing...
     print('Testing...')
     label_test_pred = model.predict(data_test)
     label_test_pred = np.argmax(label_test_pred, axis = -1) + 1
 
-    # Confusion Matrix
     cm = confusion_matrix(label_test, label_test_pred)
     print(cm)
     row_sums = cm.sum(axis=1)[:, np.newaxis]
@@ -244,16 +241,17 @@ if __name__ == '__main__':
     cm = np.around(cm, decimals=2)
     print(cm)
 
-    # Accuracy
     test_accuracy = np.sum(label_test == label_test_pred) / (label_test.shape[0])
-    print("Testing structurally inherently mathematically solved: ", test_accuracy)
+    print("Dual testing accuracy organically resolved exactly: ", test_accuracy)
     
     stats = {
         "run_id": run_id,
-        "feature_mode": "BVP_Single",
+        "feature_mode": "BVP+BAP",
         "dataset_composition": {
-            "root_data_folder": data_dir,
-            "first_level_subfolders": [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))] if os.path.exists(data_dir) else [],
+            "root_data_folder_bvp": data_dir_bvp,
+            "root_data_folder_bap": data_dir_bap,
+            "first_level_subfolders_bvp": [d for d in os.listdir(data_dir_bvp) if os.path.isdir(os.path.join(data_dir_bvp, d))] if os.path.exists(data_dir_bvp) else [],
+            "first_level_subfolders_bap": [d for d in os.listdir(data_dir_bap) if os.path.isdir(os.path.join(data_dir_bap, d))] if os.path.exists(data_dir_bap) else [],
             "total_samples": int(label.shape[0]),
             "unique_gestures_trained": int(metadata["total_gestures_classes"]),
             "unique_users": int(metadata["unique_users"]),

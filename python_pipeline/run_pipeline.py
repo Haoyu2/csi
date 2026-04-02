@@ -236,13 +236,18 @@ def compute_doppler_spectrum(
         window_size = int(round(cfg.samp_rate * cfg.window_fraction + 1))
         if window_size % 2 == 0:
             window_size += 1
+            
+        actual_len = len(principal)
+        if window_size > actual_len:
+            window_size = actual_len
+            
         f, t, Zxx = signal.stft(
             principal,
             fs=cfg.samp_rate,
             window=("gaussian", window_size / 6.0),
             nperseg=window_size,
             # Matlab's tfrsp evaluates the STFT at every time index.
-            noverlap=window_size - 1,
+            noverlap=max(0, window_size - 1),
             nfft=cfg.samp_rate,  # 1 Hz resolution
             boundary="zeros",
             padded=True,

@@ -1,0 +1,31 @@
+{
+    "run_id": "20260402_005910_BVP",
+    "feature_mode": "BVP_Single",
+    "dataset_composition": {
+        "root_data_folder": "Data/",
+        "first_level_subfolders": [
+            "bap_data",
+            "bvp_data",
+            "doppler_data"
+        ],
+        "total_samples": 875,
+        "unique_gestures_trained": 4,
+        "unique_users": 2,
+        "unique_locations": 5,
+        "unique_orientations": 5
+    },
+    "parameters": {
+        "epochs": 30,
+        "batch_size": 32,
+        "dropout": 0.5,
+        "learning_rate": 0.001
+    },
+    "performance": {
+        "test_accuracy": 0.29545454545454547,
+        "final_train_accuracy": 0.32062146067619324,
+        "final_val_accuracy": 0.27848100662231445
+    },
+    "execution_time_seconds": {
+        "training_duration": 9.93453574180603
+    }
+}

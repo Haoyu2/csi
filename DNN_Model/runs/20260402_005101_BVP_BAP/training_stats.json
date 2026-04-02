@@ -1,0 +1,33 @@
+{
+    "run_id": "20260402_005101_BVP_BAP",
+    "feature_mode": "BVP+BAP",
+    "dataset_composition": {
+        "root_data_folder_bvp": "Data/bvp_data/",
+        "root_data_folder_bap": "Data/bap_data/",
+        "first_level_subfolders_bvp": [
+            "20181208"
+        ],
+        "first_level_subfolders_bap": [
+            "20181208"
+        ],
+        "total_samples": 875,
+        "unique_gestures_trained": 4,
+        "unique_users": 2,
+        "unique_locations": 5,
+        "unique_orientations": 5
+    },
+    "parameters": {
+        "epochs": 30,
+        "batch_size": 32,
+        "dropout": 0.5,
+        "learning_rate": 0.001
+    },
+    "performance": {
+        "test_accuracy": 0.6590909090909091,
+        "final_train_accuracy": 0.6793785095214844,
+        "final_val_accuracy": 0.6202531456947327
+    },
+    "execution_time_seconds": {
+        "training_duration": 11.52008318901062
+    }
+}

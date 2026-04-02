@@ -1,0 +1,18 @@
+{
+    "run_id": "20260401_223335_BVP_BAP",
+    "feature_mode": "BVP+BAP",
+    "parameters": {
+        "epochs": 30,
+        "batch_size": 32,
+        "dropout": 0.5,
+        "learning_rate": 0.001
+    },
+    "performance": {
+        "test_accuracy": 0.32954545454545453,
+        "final_train_accuracy": 0.29378530383110046,
+        "final_val_accuracy": 0.2531645596027374
+    },
+    "execution_time_seconds": {
+        "training_duration": 12.071199178695679
+    }
+}
