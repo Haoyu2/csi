@@ -23,3 +23,10 @@ __pycache__/
 
 # IDE / notebook checkpoints
 .ipynb_checkpoints/
+
+# Explicitly track DNN_Model data overriding the glob ignores
+!DNN_Model/bap_data/
+!DNN_Model/bap_data/**/*.npz
+!DNN_Model/bvp_data/
+!DNN_Model/bvp_data/**/*.npz
+!DNN_Model/bvp_data/**/*.mat
