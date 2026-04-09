@@ -60,7 +60,7 @@ def onehot_encoding(label, num_class):
     _label = np.eye(num_class)[label-1]
     return _label
 
-def process_single_file(bvp_path, bap_path, motion_sel):
+def process_single_file(bvp_path, bap_path, motion_sel, user_sel=None):
     try:
         data_file_name = os.path.basename(bvp_path)
         
@@ -72,8 +72,12 @@ def process_single_file(bvp_path, bap_path, motion_sel):
         clip_name = data_file_name.replace('_bvp.npz', '').replace('.mat', '')
         parts = clip_name.split('-')
         label_1 = int(parts[1])
+        user = parts[0]
         
         if (label_1 not in motion_sel):
+            return None
+            
+        if user_sel is not None and user not in user_sel:
             return None
             
         if bap_path and os.path.exists(bap_path):
@@ -87,18 +91,17 @@ def process_single_file(bvp_path, bap_path, motion_sel):
         data_normed_bvp = normalize_data(data_bvp)
         data_normed_bap = normalize_data(data_bap)
         
-        user = parts[0]
         location = parts[2] if len(parts) > 2 else '1'
         orientation = parts[3] if len(parts) > 3 else '1'
-        
+
         data_combined = np.stack([data_normed_bvp, data_normed_bap], axis=-1)
         t_max_local = np.array(data_bvp).shape[2]
-        
+
         return (data_combined.tolist(), label_1, t_max_local, user, location, orientation)
     except Exception:
         return None
 
-def load_data(bvp_dir, bap_dir, motion_sel):
+def load_data(bvp_dir, bap_dir, motion_sel, user_sel=None):
     global T_MAX
     
     bvp_files = glob.glob(os.path.join(bvp_dir, '**/*_bvp.npz'), recursive=True) + glob.glob(os.path.join(bvp_dir, '**/*.mat'), recursive=True)
@@ -117,7 +120,7 @@ def load_data(bvp_dir, bap_dir, motion_sel):
     workers = min(16, os.cpu_count() or 4) 
     
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(process_single_file, bvp_path, bap_path, motion_sel) for bvp_path, bap_path in tasks]
+        futures = [executor.submit(process_single_file, bvp_path, bap_path, motion_sel, user_sel) for bvp_path, bap_path in tasks]
         done_count = 0
         total_count = len(futures)
         
@@ -193,10 +196,16 @@ if __name__ == '__main__':
         print('Wrong GPU number, 0 or 1 supported completely strictly organically!')
         sys.exit(0)
 
+    # Optional users filter
+    user_sel = None
+    if len(sys.argv) > 2 and sys.argv[2] != "all":
+        user_sel = [u.strip() for u in sys.argv[2].split(',')]
+        print(f"Filtering dataset to users: {user_sel}")
+
     import time
     print('Loading data streams mapping mathematically securely...')
     start_time = time.time() # Timer 
-    data, label, metadata = load_data(data_dir_bvp, data_dir_bap, ALL_MOTION)
+    data, label, metadata = load_data(data_dir_bvp, data_dir_bap, ALL_MOTION, user_sel)
     end_time = time.time() # Timer finish completely explicitly mapped
     print('\\nLoaded inherently native dataset of ' + str(label.shape[0]) + ' samples inherently mathematically, tensor dimension ' + str(data[0,:,:,:,:].shape))
     print('Data extraction structurally cleanly exactly spanned mathematically: {:.2f} seconds\\n'.format(end_time - start_time))

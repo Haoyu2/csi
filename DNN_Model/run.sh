@@ -10,6 +10,7 @@ fi
 # Convert the provided data directory to an absolute path
 export DATA_DIR=$(realpath "$1")
 GPU_ID=${2:-0}
+USERS=${3:-"all"}
 
 if [ ! -d "$DATA_DIR" ]; then
     echo "Error: Data directory '$DATA_DIR' does not exist."
@@ -23,8 +24,8 @@ if ! docker info | grep -i "nvidia" > /dev/null 2>&1; then
     exit 1
 fi
 
-echo "Running container with data folder: ${DATA_DIR} on GPU: ${GPU_ID}"
+echo "Running container with data folder: ${DATA_DIR} on GPU: ${GPU_ID} for users: ${USERS}"
 
 # Use docker-compose to run the container
 # This sets up the volumes automatically from docker-compose.yml
-docker compose run --rm dnn_model python widar3_keras_mp.py ${GPU_ID}
+docker compose run --rm dnn_model python widar3_keras_mp.py ${GPU_ID} "${USERS}"

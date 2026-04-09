@@ -55,7 +55,7 @@ def onehot_encoding(label, num_class):
     return _label
 
 # Top-level helper function for multiprocessing
-def process_single_file(file_path, motion_sel):
+def process_single_file(file_path, motion_sel, user_sel=None):
     try:
         data_file_name = os.path.basename(file_path)
         if file_path.endswith('.npz'):
@@ -74,6 +74,10 @@ def process_single_file(file_path, motion_sel):
         # Select Motion
         if (label_1 not in motion_sel):
             return None
+            
+        # Select User
+        if user_sel is not None and user not in user_sel:
+            return None
         
         # Normalization
         data_normed_1 = normalize_data(data_1)
@@ -83,7 +87,7 @@ def process_single_file(file_path, motion_sel):
     except Exception:
         return None
 
-def load_data(path_to_data, motion_sel):
+def load_data(path_to_data, motion_sel, user_sel=None):
     global T_MAX
     
     # 1. Collect all files
@@ -103,7 +107,7 @@ def load_data(path_to_data, motion_sel):
     workers = min(16, os.cpu_count() or 4) 
     
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(process_single_file, fp, motion_sel) for fp in all_files]
+        futures = [executor.submit(process_single_file, fp, motion_sel, user_sel) for fp in all_files]
         done_count = 0
         total_count = len(futures)
         
@@ -188,11 +192,17 @@ if __name__ == '__main__':
         print('Wrong GPU number, 0 or 1 supported!')
         sys.exit(0)
 
+    # Optional users filter
+    user_sel = None
+    if len(sys.argv) > 2 and sys.argv[2] != "all":
+        user_sel = [u.strip() for u in sys.argv[2].split(',')]
+        print(f"Filtering dataset to users: {user_sel}")
+
     # Load data
     import time
     print('Loading data...')
     start_time = time.time()
-    data, label, metadata = load_data(data_dir, ALL_MOTION)
+    data, label, metadata = load_data(data_dir, ALL_MOTION, user_sel)
     end_time = time.time()
     print('\nLoaded dataset of ' + str(label.shape[0]) + ' samples, each sized ' + str(data[0,:,:].shape))
     print('Data loading took {:.2f} seconds\n'.format(end_time - start_time))

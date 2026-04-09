@@ -23,8 +23,8 @@ from run_pipeline_bap import doppler_to_bvp_bap, MappingConfig
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Batch process Doppler data directly into BAP matrices.")
-    parser.add_argument("--doppler-dir", type=str, default="doppler_data", help="Root directory containing *_doppler.npz files.")
-    parser.add_argument("--out-dir", type=str, default="bap_data", help="Structured output directory specifically targeting BAP tensors.")
+    parser.add_argument("--doppler-dir", type=str, default="/media/haoyu/New Volume/Widar3.0_Processed/doppler_data", help="Root directory containing *_doppler.npz files.")
+    parser.add_argument("--out-dir", type=str, default="/media/haoyu/New Volume/Widar3.0_Processed/bap_data", help="Structured output directory specifically targeting BAP tensors.")
     return parser.parse_args()
 
 

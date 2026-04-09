@@ -22,8 +22,8 @@ from run_pipeline import doppler_to_bvp, MappingConfig
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Batch process Doppler data directly into spatial BVP matrices.")
-    parser.add_argument("--doppler-dir", type=str, default="doppler_data", help="Root directory containing doppler.npz files.")
-    parser.add_argument("--out-dir", type=str, default="bvp_data", help="Structured output directory for BVP matrices.")
+    parser.add_argument("--doppler-dir", type=str, default="/media/haoyu/New Volume/Widar3.0_Processed/doppler_data", help="Root directory containing doppler.npz files.")
+    parser.add_argument("--out-dir", type=str, default="/media/haoyu/New Volume/Widar3.0_Processed/bvp_data", help="Structured output directory for BVP matrices.")
     return parser.parse_args()
 
 
