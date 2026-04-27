@@ -1,0 +1,39 @@
+{
+    "run_id": "20260427_153033_BVP",
+    "feature_mode": "BVP_Single",
+    "dataset_composition": {
+        "root_data_folder": "Data/",
+        "first_level_subfolders": [
+            "user17",
+            "BVP-Data-From-Batch2",
+            "user10",
+            "user16",
+            "user11",
+            "user5",
+            "user13",
+            "user14",
+            "user12",
+            "user15",
+            "20181109"
+        ],
+        "total_samples": 23860,
+        "unique_gestures_trained": 6,
+        "unique_users": 13,
+        "unique_locations": 8,
+        "unique_orientations": 5
+    },
+    "parameters": {
+        "epochs": 30,
+        "batch_size": 32,
+        "dropout": 0.5,
+        "learning_rate": 0.001
+    },
+    "performance": {
+        "test_accuracy": 0.34660519698239733,
+        "final_train_accuracy": 0.3729173243045807,
+        "final_val_accuracy": 0.34776535630226135
+    },
+    "execution_time_seconds": {
+        "training_duration": 288.81311297416687
+    }
+}
