@@ -100,15 +100,16 @@ def load_raw_bvp(bvp_dir, motion_sel, user_filter=None):
     """Load all raw (unnormalized) BVP arrays.
 
     Returns:
-        raw_data: list of arrays, each (20, 20, T)
-        labels:   np.ndarray of gesture labels
-        T_MAX:    max time length across samples
+        raw_data:     list of arrays, each (20, 20, T)
+        motion_lbls:  np.ndarray of gesture labels (1..N)
+        user_lbls:    np.ndarray of user tokens (e.g. 'user1')
+        T_MAX:        max time length across samples
     """
     files = sorted(
         glob.glob(os.path.join(bvp_dir, "**/*.npz"), recursive=True)
         + glob.glob(os.path.join(bvp_dir, "**/*.mat"), recursive=True)
     )
-    raw, labels, T_MAX = [], [], 0
+    raw, motion_lbls, user_lbls, T_MAX = [], [], [], 0
     users = set()
     workers = min(16, os.cpu_count() or 4)
 
@@ -122,12 +123,21 @@ def load_raw_bvp(bvp_dir, motion_sel, user_filter=None):
             if user_filter and user not in user_filter:
                 continue
             raw.append(arr)
-            labels.append(label)
+            motion_lbls.append(label)
+            user_lbls.append(user)
             users.add(user)
             T_MAX = max(T_MAX, arr.shape[2])
 
     print(f"  Loaded {len(raw)} samples | users: {sorted(users)} | T_MAX: {T_MAX}")
-    return raw, np.array(labels), T_MAX
+    return raw, np.array(motion_lbls), np.array(user_lbls), T_MAX
+
+
+def encode_labels(labels):
+    """Map arbitrary labels to 0..N-1. Returns (encoded, n_class, classes)."""
+    classes = sorted(set(labels.tolist()))
+    mapping = {c: i for i, c in enumerate(classes)}
+    encoded = np.array([mapping[v] for v in labels], dtype=np.int64)
+    return encoded, len(classes), classes
 
 
 # ──────────────────────────────────────────────────────────
@@ -214,20 +224,20 @@ def build_model(input_shape, n_class):
 # ──────────────────────────────────────────────────────────
 # Experiment runner
 # ──────────────────────────────────────────────────────────
-def run_experiment(name, data, labels, n_channels):
-    """Train and evaluate one experiment. Returns result dict."""
+def run_experiment(name, data, labels, n_channels, n_class):
+    """Train and evaluate one experiment. Labels must be 0-indexed in [0, n_class)."""
     T_MAX = data.shape[1]
     print(f"\n{'=' * 60}")
     print(f"  {name}")
-    print(f"  Data: {data.shape}  |  Labels: {labels.shape}")
+    print(f"  Data: {data.shape}  |  Labels: {labels.shape}  |  n_class: {n_class}")
     print(f"{'=' * 60}")
 
     data_train, data_test, y_train, y_test = train_test_split(
         data, labels, test_size=TEST_FRACTION, random_state=RANDOM_SEED
     )
-    y_train_oh = np.eye(N_MOTION)[y_train - 1]
+    y_train_oh = np.eye(n_class)[y_train]
 
-    model = build_model(input_shape=(T_MAX, 20, 20, n_channels), n_class=N_MOTION)
+    model = build_model(input_shape=(T_MAX, 20, 20, n_channels), n_class=n_class)
 
     tf.random.set_seed(RANDOM_SEED)
     np.random.seed(RANDOM_SEED)
@@ -240,7 +250,7 @@ def run_experiment(name, data, labels, n_channels):
     )
     train_time = time.time() - t0
 
-    pred = np.argmax(model.predict(data_test, verbose=0), axis=-1) + 1
+    pred = np.argmax(model.predict(data_test, verbose=0), axis=-1)
     acc = np.mean(pred == y_test)
 
     cm = confusion_matrix(y_test, pred)
@@ -284,6 +294,10 @@ Examples:
     p.add_argument("--gpu", default=None, help="GPU device ID. Omit for CPU.")
     p.add_argument("--epochs", type=int, default=None, help="Override number of epochs")
     p.add_argument("--batch-size", type=int, default=None, help="Override batch size")
+    p.add_argument("--task", default="motion", choices=["motion", "user"],
+                   help="Classification target (default: motion)")
+    p.add_argument("--per-motion", action="store_true",
+                   help="Run one experiment per motion in ALL_MOTION (e.g. for --task user)")
     return p.parse_args()
 
 
@@ -304,32 +318,55 @@ def main():
     user_filter = set(args.users.split(",")) if args.users else None
     modes = ["bvp", "bap", "bvp+bap"] if args.mode == "all" else [args.mode]
 
+    if args.per_motion:
+        groups = [(f"motion{m}", [m]) for m in ALL_MOTION]
+    else:
+        groups = [("all", list(ALL_MOTION))]
+
     print(f"Users:    {sorted(user_filter) if user_filter else 'all'}")
     print(f"Gestures: {ALL_MOTION}")
     print(f"Modes:    {modes}")
+    print(f"Task:     {args.task}")
+    print(f"Groups:   {[g[0] for g in groups]}")
     print(f"Epochs:   {N_EPOCHS}  Batch: {BATCH_SIZE}")
 
     print("\nLoading BVP data...")
-    raw_bvp, labels, T_MAX = load_raw_bvp(args.bvp_dir, ALL_MOTION, user_filter)
+    raw_bvp, motion_lbls, user_lbls, T_MAX = load_raw_bvp(
+        args.bvp_dir, list(ALL_MOTION), user_filter
+    )
 
     if len(raw_bvp) == 0:
         print("No data found. Check --bvp-dir and --users.")
         sys.exit(1)
 
     results = []
-    for mode in modes:
-        n_ch = 2 if mode == "bvp+bap" else 1
-        data = prepare_features(raw_bvp, T_MAX, mode)
-        res = run_experiment(mode.upper(), data, labels, n_ch)
-        results.append(res)
+    for grp_name, motion_set in groups:
+        idx = np.where(np.isin(motion_lbls, motion_set))[0]
+        if len(idx) == 0:
+            print(f"\n[{grp_name}] no samples; skip.")
+            continue
+        raw_grp = [raw_bvp[i] for i in idx]
+        raw_target = user_lbls[idx] if args.task == "user" else motion_lbls[idx]
+        y, n_class, classes = encode_labels(raw_target)
+        print(f"\n[{grp_name}] samples={len(idx)}  classes={classes}")
+
+        for mode in modes:
+            n_ch = 2 if mode == "bvp+bap" else 1
+            data = prepare_features(raw_grp, T_MAX, mode)
+            res = run_experiment(f"{grp_name}|{mode.upper()}", data, y, n_ch, n_class)
+            res["group"] = grp_name
+            res["mode"] = mode
+            res["n_samples"] = int(len(idx))
+            res["classes"] = [str(c) for c in classes]
+            results.append(res)
 
     # Summary
     print("\n" + "=" * 60)
-    print(f"RESULTS  ({len(raw_bvp)} samples, {N_MOTION} gestures, "
-          f"users: {sorted(user_filter) if user_filter else 'all'})")
+    print(f"RESULTS  task={args.task}  "
+          f"users: {sorted(user_filter) if user_filter else 'all'}")
     print("-" * 60)
     for r in results:
-        print(f"  {r['name']:12s}  test={r['accuracy']:.4f}  "
+        print(f"  {r['name']:30s}  test={r['accuracy']:.4f}  "
               f"val={r['final_val_acc']:.4f}  ({r['train_time_s']}s)")
     print("=" * 60)
 
@@ -339,9 +376,10 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     out = {
         "run_id": run_id,
+        "task": args.task,
+        "per_motion": args.per_motion,
         "users": sorted(user_filter) if user_filter else "all",
-        "n_samples": len(raw_bvp),
-        "n_gestures": N_MOTION,
+        "n_samples_total": len(raw_bvp),
         "epochs": N_EPOCHS,
         "batch_size": BATCH_SIZE,
         "results": results,

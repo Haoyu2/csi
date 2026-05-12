@@ -14,3 +14,16 @@ __pycache__/
 
 # Training runs (generated)
 runs/
+runs_archive/
+
+# Generated analysis figures / reports
+analysis/
+
+# Datasets (raw + reorganized) and archives
+data/
+data-old/
+*.zip
+
+# Dataset manifests pulled from main
+bvp_full.csv
+statistic.txt
