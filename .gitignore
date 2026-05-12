@@ -21,6 +21,7 @@ analysis/
 
 # Datasets (raw + reorganized) and archives
 data/
+data_raw/
 data-old/
 *.zip
 
