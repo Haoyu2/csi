@@ -166,9 +166,12 @@ def load_arrays(manifest, *, parallel=True, cache_path=None):
 
     if cache_path:
         Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
-        np.savez(cache_path,
-                 raw=np.array(arrays, dtype=object),
-                 motion=motion, user=user, T_MAX=T_MAX)
+        # Build object array element-wise so numpy can't try to coerce the
+        # variable-T arrays into a single dense ndarray.
+        raw_obj = np.empty(len(arrays), dtype=object)
+        for i, a in enumerate(arrays):
+            raw_obj[i] = a
+        np.savez(cache_path, raw=raw_obj, motion=motion, user=user, T_MAX=T_MAX)
         print(f"  cache wrote: {cache_path}")
 
     return arrays, motion, user, T_MAX
