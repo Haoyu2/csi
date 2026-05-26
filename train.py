@@ -11,13 +11,16 @@ Supports four feature modes:
 BAP is always computed on-the-fly from BVP as: BAP[t] = BVP[t] - BVP[t-1].
 Pre-extracted BAP files are NOT required.
 
+Data loading is CSV-driven (see dataset.py): filters operate on bvp_full.csv,
+the train/test split defaults to ``by-key`` (no session leakage), and the
+875 doubled-date zip artifacts are dropped automatically.
+
 Usage:
-    python train.py --mode all --bvp-dir data/bvp
-    python train.py --mode bap --bvp-dir data/bvp --users user10,user11,user12,user13
-    python train.py --mode bvp+bap --bvp-dir data/bvp --gpu 0
+    python train.py --mode all
+    python train.py --mode bap --users user1,user4 --gestures 1,2,3
+    python train.py --mode bvp+bap --gpu 0 --epochs 50 --cache cache/all.npz
 """
 import argparse
-import glob
 import json
 import os
 import sys
@@ -26,9 +29,6 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import scipy.io as scio
-from concurrent.futures import ProcessPoolExecutor
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -38,12 +38,13 @@ from tensorflow.keras.layers import (
 )
 from tensorflow.keras.models import Model
 
+from dataset import load_arrays, load_manifest, make_split_indices, summarize
+
 
 # ──────────────────────────────────────────────────────────
 # Hyperparameters (Widar3.0 paper defaults)
 # ──────────────────────────────────────────────────────────
-ALL_MOTION = [1, 2, 3, 4, 5, 6]
-N_MOTION = len(ALL_MOTION)
+DEFAULT_GESTURES = [1, 2, 3, 4, 5, 6]   # legacy; motions 7-10 selectable via --gestures
 N_EPOCHS = 30
 DROPOUT = 0.5
 GRU_UNITS = 128
@@ -78,60 +79,8 @@ def normalize_data(data):
 
 
 # ──────────────────────────────────────────────────────────
-# Data loading
+# Data loading — see dataset.py for the manifest layer
 # ──────────────────────────────────────────────────────────
-def _load_single(file_path):
-    """Load one BVP .npz or .mat file. Returns (array, label, user) or None."""
-    try:
-        fname = os.path.basename(file_path)
-        if file_path.endswith(".npz"):
-            arr = np.load(file_path)["velocity_spectrum_ro"]
-            clip = fname.replace("_bvp.npz", "").replace(".npz", "")
-        else:
-            arr = scio.loadmat(file_path)["velocity_spectrum_ro"]
-            clip = fname.replace(".mat", "")
-        parts = clip.split("-")
-        return arr, int(parts[1]), parts[0]
-    except Exception:
-        return None
-
-
-def load_raw_bvp(bvp_dir, motion_sel, user_filter=None):
-    """Load all raw (unnormalized) BVP arrays.
-
-    Returns:
-        raw_data:     list of arrays, each (20, 20, T)
-        motion_lbls:  np.ndarray of gesture labels (1..N)
-        user_lbls:    np.ndarray of user tokens (e.g. 'user1')
-        T_MAX:        max time length across samples
-    """
-    files = sorted(
-        glob.glob(os.path.join(bvp_dir, "**/*.npz"), recursive=True)
-        + glob.glob(os.path.join(bvp_dir, "**/*.mat"), recursive=True)
-    )
-    raw, motion_lbls, user_lbls, T_MAX = [], [], [], 0
-    users = set()
-    workers = min(16, os.cpu_count() or 4)
-
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        for res in ex.map(_load_single, files):
-            if res is None:
-                continue
-            arr, label, user = res
-            if label not in motion_sel:
-                continue
-            if user_filter and user not in user_filter:
-                continue
-            raw.append(arr)
-            motion_lbls.append(label)
-            user_lbls.append(user)
-            users.add(user)
-            T_MAX = max(T_MAX, arr.shape[2])
-
-    print(f"  Loaded {len(raw)} samples | users: {sorted(users)} | T_MAX: {T_MAX}")
-    return raw, np.array(motion_lbls), np.array(user_lbls), T_MAX
-
-
 def encode_labels(labels):
     """Map arbitrary labels to 0..N-1. Returns (encoded, n_class, classes)."""
     classes = sorted(set(labels.tolist()))
@@ -224,17 +173,21 @@ def build_model(input_shape, n_class):
 # ──────────────────────────────────────────────────────────
 # Experiment runner
 # ──────────────────────────────────────────────────────────
-def run_experiment(name, data, labels, n_channels, n_class):
-    """Train and evaluate one experiment. Labels must be 0-indexed in [0, n_class)."""
+def run_experiment(name, data, labels, train_idx, test_idx, n_channels, n_class):
+    """Train and evaluate one experiment using a pre-computed split.
+
+    Labels must be 0-indexed in [0, n_class). The split (``train_idx``,
+    ``test_idx``) is computed at the manifest level by ``make_split_indices``
+    so all modes within a group see the same paired split.
+    """
     T_MAX = data.shape[1]
     print(f"\n{'=' * 60}")
     print(f"  {name}")
-    print(f"  Data: {data.shape}  |  Labels: {labels.shape}  |  n_class: {n_class}")
+    print(f"  Data: {data.shape}  |  train={len(train_idx)}  test={len(test_idx)}  n_class: {n_class}")
     print(f"{'=' * 60}")
 
-    data_train, data_test, y_train, y_test = train_test_split(
-        data, labels, test_size=TEST_FRACTION, random_state=RANDOM_SEED
-    )
+    data_train, data_test = data[train_idx], data[test_idx]
+    y_train, y_test = labels[train_idx], labels[test_idx]
     y_train_oh = np.eye(n_class)[y_train]
 
     model = build_model(input_shape=(T_MAX, 20, 20, n_channels), n_class=n_class)
@@ -275,29 +228,55 @@ def run_experiment(name, data, labels, n_channels, n_class):
 # ──────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────
+def _csv_list(s):
+    return [v.strip() for v in s.split(",") if v.strip()] if s else None
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Train Widar3.0 gesture classifier with BVP/BAP features.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python train.py --mode all --bvp-dir data/bvp
-  python train.py --mode bap --bvp-dir data/bvp --users user10,user11,user12,user13
-  python train.py --mode bvp+bap --bvp-dir data/bvp --gpu 0 --epochs 50
+  python train.py --mode all
+  python train.py --mode bap --users user1,user4 --gestures 1,2,3
+  python train.py --mode bvp+bap --gpu 0 --epochs 50 --cache cache/all.npz
+  python train.py --mode all --dedup-mode one-per-key --split-strategy by-session
         """,
     )
-    p.add_argument("--bvp-dir", default="data/bvp", help="Path to BVP data directory")
+    # Data source
+    p.add_argument("--csv", default="bvp_full.csv", help="Manifest CSV (default: bvp_full.csv)")
+    p.add_argument("--data-dir", default="data", help="Extracted-zip root (default: data)")
+
+    # Filters (exact match against CSV columns; None keeps all)
+    p.add_argument("--users", default=None,
+                   help="Comma-separated user tokens, e.g. user1,user4 (exact match)")
+    p.add_argument("--gestures", default=",".join(map(str, DEFAULT_GESTURES)),
+                   help="Comma-separated gesture IDs (default: 1,2,3,4,5,6; pass 1..10 to include 7-10)")
+    p.add_argument("--locations", default=None,
+                   help="Comma-separated location IDs (default: all)")
+    p.add_argument("--orientations", default=None,
+                   help="Comma-separated face-orientation IDs (default: all)")
+
+    # Manifest options
+    p.add_argument("--dedup-mode", default="keep-all", choices=["keep-all", "one-per-key"],
+                   help="Treat multi-session re-recordings: keep-all (default) or one-per-key")
+    p.add_argument("--split-strategy", default="by-key",
+                   choices=["by-key", "random", "by-session"],
+                   help="Train/test split strategy (default: by-key; no session leakage)")
+    p.add_argument("--cache", default=None,
+                   help="Optional .npz path for the raw-array cache; speeds repeated runs")
+
+    # Experiment
     p.add_argument("--mode", default="all", choices=["bvp", "bap", "bvp+bap", "all"],
                    help="Feature mode (default: all)")
-    p.add_argument("--users", default=None,
-                   help="Comma-separated user filter (e.g. user10,user11)")
-    p.add_argument("--gpu", default=None, help="GPU device ID. Omit for CPU.")
-    p.add_argument("--epochs", type=int, default=None, help="Override number of epochs")
-    p.add_argument("--batch-size", type=int, default=None, help="Override batch size")
     p.add_argument("--task", default="motion", choices=["motion", "user"],
                    help="Classification target (default: motion)")
     p.add_argument("--per-motion", action="store_true",
-                   help="Run one experiment per motion in ALL_MOTION (e.g. for --task user)")
+                   help="Run one experiment per gesture (useful for --task user)")
+    p.add_argument("--gpu", default=None, help="GPU device ID. Omit for CPU.")
+    p.add_argument("--epochs", type=int, default=None, help="Override number of epochs")
+    p.add_argument("--batch-size", type=int, default=None, help="Override batch size")
     return p.parse_args()
 
 
@@ -305,65 +284,84 @@ def main():
     global N_EPOCHS, BATCH_SIZE
     args = parse_args()
 
-    if args.gpu is not None:
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
-    else:
-        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu if args.gpu is not None else "-1"
     if args.epochs:
         N_EPOCHS = args.epochs
     if args.batch_size:
         BATCH_SIZE = args.batch_size
 
-    user_filter = set(args.users.split(",")) if args.users else None
+    users = _csv_list(args.users)
+    gestures = [int(g) for g in _csv_list(args.gestures)]
+    locations = _csv_list(args.locations)
+    orientations = _csv_list(args.orientations)
     modes = ["bvp", "bap", "bvp+bap"] if args.mode == "all" else [args.mode]
+    groups = ([(f"motion{m}", [m]) for m in gestures] if args.per_motion
+              else [("all", list(gestures))])
 
-    if args.per_motion:
-        groups = [(f"motion{m}", [m]) for m in ALL_MOTION]
-    else:
-        groups = [("all", list(ALL_MOTION))]
-
-    print(f"Users:    {sorted(user_filter) if user_filter else 'all'}")
-    print(f"Gestures: {ALL_MOTION}")
-    print(f"Modes:    {modes}")
-    print(f"Task:     {args.task}")
-    print(f"Groups:   {[g[0] for g in groups]}")
+    print(f"CSV:      {args.csv}  (data_dir={args.data_dir})")
+    print(f"Users:    {users or 'all'}")
+    print(f"Gestures: {gestures}")
+    print(f"Locations:    {locations or 'all'}")
+    print(f"Orientations: {orientations or 'all'}")
+    print(f"Dedup:    {args.dedup_mode}     Split: {args.split_strategy}")
+    print(f"Modes:    {modes}     Task: {args.task}     Groups: {[g[0] for g in groups]}")
     print(f"Epochs:   {N_EPOCHS}  Batch: {BATCH_SIZE}")
 
-    print("\nLoading BVP data...")
-    raw_bvp, motion_lbls, user_lbls, T_MAX = load_raw_bvp(
-        args.bvp_dir, list(ALL_MOTION), user_filter
+    print("\nLoading manifest...")
+    manifest = load_manifest(
+        args.csv, data_dir=args.data_dir,
+        users=users, gestures=gestures,
+        locations=locations, orientations=orientations,
+        dedup_mode=args.dedup_mode,
     )
-
-    if len(raw_bvp) == 0:
-        print("No data found. Check --bvp-dir and --users.")
+    summarize(manifest, "filtered")
+    if not manifest:
+        print("No rows match the filters.")
         sys.exit(1)
+
+    print("\nLoading BVP arrays...")
+    raw_bvp, motion_lbls, user_lbls, T_MAX = load_arrays(
+        manifest, parallel=True, cache_path=args.cache,
+    )
+    print(f"  loaded {len(raw_bvp)} samples | T_MAX: {T_MAX}")
 
     results = []
     for grp_name, motion_set in groups:
-        idx = np.where(np.isin(motion_lbls, motion_set))[0]
-        if len(idx) == 0:
+        grp_idx = np.where(np.isin(motion_lbls, motion_set))[0]
+        if len(grp_idx) == 0:
             print(f"\n[{grp_name}] no samples; skip.")
             continue
-        raw_grp = [raw_bvp[i] for i in idx]
-        raw_target = user_lbls[idx] if args.task == "user" else motion_lbls[idx]
+
+        grp_manifest = [manifest[i] for i in grp_idx]
+        train_local, test_local = make_split_indices(
+            grp_manifest, strategy=args.split_strategy,
+            test_frac=TEST_FRACTION, seed=RANDOM_SEED,
+        )
+
+        raw_grp = [raw_bvp[i] for i in grp_idx]
+        raw_target = (user_lbls if args.task == "user" else motion_lbls)[grp_idx]
         y, n_class, classes = encode_labels(raw_target)
-        print(f"\n[{grp_name}] samples={len(idx)}  classes={classes}")
+        print(f"\n[{grp_name}] samples={len(grp_idx)}  "
+              f"train={len(train_local)}  test={len(test_local)}  classes={classes}")
 
         for mode in modes:
             n_ch = 2 if mode == "bvp+bap" else 1
             data = prepare_features(raw_grp, T_MAX, mode)
-            res = run_experiment(f"{grp_name}|{mode.upper()}", data, y, n_ch, n_class)
+            res = run_experiment(
+                f"{grp_name}|{mode.upper()}", data, y,
+                train_local, test_local, n_ch, n_class,
+            )
             res["group"] = grp_name
             res["mode"] = mode
-            res["n_samples"] = int(len(idx))
+            res["n_samples"] = int(len(grp_idx))
+            res["n_train"] = int(len(train_local))
+            res["n_test"] = int(len(test_local))
             res["classes"] = [str(c) for c in classes]
             results.append(res)
 
     # Summary
     print("\n" + "=" * 60)
-    print(f"RESULTS  task={args.task}  "
-          f"users: {sorted(user_filter) if user_filter else 'all'}")
+    print(f"RESULTS  task={args.task}  split={args.split_strategy}  dedup={args.dedup_mode}")
     print("-" * 60)
     for r in results:
         print(f"  {r['name']:30s}  test={r['accuracy']:.4f}  "
@@ -378,7 +376,12 @@ def main():
         "run_id": run_id,
         "task": args.task,
         "per_motion": args.per_motion,
-        "users": sorted(user_filter) if user_filter else "all",
+        "filters": {
+            "users": users or "all", "gestures": gestures,
+            "locations": locations or "all", "orientations": orientations or "all",
+        },
+        "dedup_mode": args.dedup_mode,
+        "split_strategy": args.split_strategy,
         "n_samples_total": len(raw_bvp),
         "epochs": N_EPOCHS,
         "batch_size": BATCH_SIZE,
