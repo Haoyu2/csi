@@ -38,6 +38,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.metrics import confusion_matrix
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 import tensorflow as tf
@@ -85,6 +86,7 @@ def run_one(name, X, y, train_idx, val_idx, test_idx, n_class, n_channels, *,
 
     pred = np.argmax(model.predict(X_test, verbose=0), axis=-1)
     acc = float(np.mean(pred == y_test))
+    cm = confusion_matrix(y_test, pred, labels=list(range(n_class)))
 
     tf.keras.backend.clear_session()
 
@@ -100,6 +102,7 @@ def run_one(name, X, y, train_idx, val_idx, test_idx, n_class, n_channels, *,
         "n_val": int(len(val_idx)),
         "n_test": int(len(test_idx)),
         "n_class": int(n_class),
+        "confusion_matrix": cm.tolist(),
     }
 
 
@@ -309,6 +312,28 @@ def _fmt_val(v):
     return f"{v:.4f}" if isinstance(v, (int, float)) else "N/A"
 
 
+def _fmt_confusion(cm, classes, normalize=True):
+    """Render a confusion matrix as a fenced text block (row-normalized by default).
+
+    Rows are true labels; columns are predictions. Values fit in ~5 chars.
+    """
+    cm = np.asarray(cm, dtype=float)
+    if normalize:
+        rows = cm.sum(axis=1, keepdims=True)
+        cm = np.divide(cm, rows, out=np.zeros_like(cm), where=rows > 0)
+    w = max(7, max(len(str(c)) for c in classes) + 1)
+    head = "true\\pred".ljust(w) + " ".join(str(c).rjust(w) for c in classes)
+    lines = [head]
+    for i, c in enumerate(classes):
+        cells = " ".join(f"{cm[i, j]:>{w}.2f}" for j in range(len(classes)))
+        lines.append(str(c).ljust(w) + cells)
+    return "```\n" + "\n".join(lines) + "\n```\n"
+
+
+def _aggregate_cm(matrices):
+    return np.sum(np.array(matrices), axis=0)
+
+
 def write_summary(out_dir, results, manifest_size):
     lines = [f"# Experiment Sweep Results\n",
              f"Generated: {datetime.now().isoformat(timespec='seconds')}\n",
@@ -322,6 +347,11 @@ def write_summary(out_dir, results, manifest_size):
             lines.append(f"| {r['mode'].upper()} | {r['accuracy']:.4f} | "
                          f"{r['final_train_acc']:.4f} | {_fmt_val(r['final_val_acc'])} | "
                          f"{r['train_time_s']}s |\n")
+        lines.append("\n### Confusion matrices (row-normalized)\n\n")
+        for r in results["config1"]:
+            lines.append(f"**{r['mode'].upper()}**\n\n")
+            lines.append(_fmt_confusion(r["confusion_matrix"], r["classes"]))
+            lines.append("\n")
 
     if "config2" in results:
         lines.append("\n## Config 2 — Per-motion user classification\n\n")
@@ -331,12 +361,19 @@ def write_summary(out_dir, results, manifest_size):
             lines.append(f"| {r['motion']} | {r['mode'].upper()} | "
                          f"{r['accuracy']:.4f} | {_fmt_val(r['final_val_acc'])} | "
                          f"{r['n_train']} | {r.get('n_val', 0)} | {r['n_test']} |\n")
+        lines.append("\n### Confusion matrices per motion (row-normalized)\n\n")
+        for m in range(1, 7):
+            for r in results["config2"]:
+                if r.get("motion") == m:
+                    lines.append(f"**Motion {m} — {r['mode'].upper()}**\n\n")
+                    lines.append(_fmt_confusion(r["confusion_matrix"], r["classes"]))
+                    lines.append("\n")
 
     if "config3" in results:
         rs = results["config3"]
         lines.append("\n## Config 3 — Per-cell user classification (ideal settings)\n\n")
         lines.append("Predict user (3 classes). One experiment per "
-                     "(motion, orientation, location) cell. Split: random, test_frac=0.2.\n\n")
+                     "(motion, orientation, location) cell. Split: random 3-way 0.6/0.2/0.2.\n\n")
         bvp = [r["accuracy"] for r in rs if r["mode"] == "bvp"]
         bap = [r["accuracy"] for r in rs if r["mode"] == "bap"]
         lines.append(f"**Overall mean across {len(bvp)} cells:**\n\n")
@@ -349,6 +386,47 @@ def write_summary(out_dir, results, manifest_size):
             if bvp_m:
                 lines.append(f"| {m} | {np.mean(bvp_m):.4f} | "
                              f"{np.mean(bap_m):.4f} | {len(bvp_m)} |\n")
+
+        # Aggregated confusion matrix per motion x mode
+        lines.append("\n### Aggregated confusion matrix per motion (summed over all cells)\n\n")
+        for m in range(1, 7):
+            for mode in ("bvp", "bap"):
+                cells = [r for r in rs if r["motion"] == m and r["mode"] == mode]
+                if not cells:
+                    continue
+                cm_agg = _aggregate_cm([r["confusion_matrix"] for r in cells])
+                classes = cells[0]["classes"]
+                lines.append(f"**Motion {m} — {mode.upper()}** ({len(cells)} cells pooled)\n\n")
+                lines.append(_fmt_confusion(cm_agg, classes))
+                lines.append("\n")
+
+        # Sampled cells per motion (spread across BVP-accuracy quantiles)
+        lines.append("\n### Sample cells per motion (5 spread by BVP accuracy)\n\n")
+        lines.append("For each motion, picking the worst, 25th-pct, median, 75th-pct, and best cells by BVP accuracy.\n\n")
+        for m in range(1, 7):
+            bvp_cells = sorted([r for r in rs if r["motion"] == m and r["mode"] == "bvp"],
+                               key=lambda r: r["accuracy"])
+            if not bvp_cells:
+                continue
+            n = len(bvp_cells)
+            picks = sorted(set([0, n // 4, n // 2, (3 * n) // 4, n - 1]))
+            lines.append(f"\n#### Motion {m}\n\n")
+            for i in picks:
+                rb = bvp_cells[i]
+                ra = next((r for r in rs if r["mode"] == "bap"
+                           and r["motion"] == rb["motion"]
+                           and r["orientation"] == rb["orientation"]
+                           and r["location"] == rb["location"]), None)
+                bap_acc = f"{ra['accuracy']:.4f}" if ra else "N/A"
+                lines.append(f"**ori={rb['orientation']}, loc={rb['location']}** "
+                             f"— BVP={rb['accuracy']:.4f}, BAP={bap_acc}, "
+                             f"n_test={rb['n_test']}\n\n")
+                lines.append("BVP:\n\n")
+                lines.append(_fmt_confusion(rb["confusion_matrix"], rb["classes"]))
+                if ra:
+                    lines.append("\nBAP:\n\n")
+                    lines.append(_fmt_confusion(ra["confusion_matrix"], ra["classes"]))
+                lines.append("\n")
 
     (out_dir / "summary.md").write_text("".join(lines))
 
