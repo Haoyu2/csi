@@ -20,7 +20,10 @@ runs_archive/
 analysis/
 
 # Datasets (raw + reorganized) and archives
-data/
+# Track data/ itself (via .gitkeep) so the directory ships in the repo,
+# but ignore the BVP files extracted into it by extract_data.py.
+data/*
+!data/.gitkeep
 data_raw/
 data-old/
 *.zip
