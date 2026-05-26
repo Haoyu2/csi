@@ -17,7 +17,10 @@ runs/
 runs_archive/
 
 # Generated analysis figures / reports
-analysis/
+# Track analysis/dataset/ (committed corpus distribution PNGs);
+# ignore everything else under analysis/.
+analysis/*
+!analysis/dataset/
 
 # Datasets (raw + reorganized) and archives
 # Track data/ itself (via .gitkeep) so the directory ships in the repo,
