@@ -3,8 +3,10 @@
 
 All configs use users 1-3, gestures 1-6, ``keep-all`` dedup.
 
-Config 1 — Motion classification:
-    Single experiment per mode. Predict gesture (6-class).
+Config 1 — Aggregate user classification:
+    Single experiment per mode. Predict user (3-class) using all motions
+    1-6 together. Baseline that lets environment (motion, orientation,
+    location) vary freely; Configs 2 and 3 progressively narrow it.
     Split: by-key, test_frac=0.1.
 
 Config 2 — Per-motion user classification:
@@ -28,30 +30,46 @@ import json
 import os
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 import tensorflow as tf
 
-from dataset import load_arrays, load_manifest, make_split_indices
+from dataset import load_arrays, load_manifest, make_three_way_split
 from train import RANDOM_SEED, build_model, encode_labels, prepare_features
+
+
+SPLIT_COLORS = {"train": "#4c72b0", "val": "#dd8452", "test": "#55a868"}
+SPLIT_DIMS = [("userid", "User"), ("gesture", "Gesture"),
+              ("location", "Location"), ("face orientation", "Orientation")]
 
 
 # ──────────────────────────────────────────────────────────
 # Single-experiment runner
 # ──────────────────────────────────────────────────────────
-def run_one(name, X, y, train_idx, test_idx, n_class, n_channels, *,
+def run_one(name, X, y, train_idx, val_idx, test_idx, n_class, n_channels, *,
             epochs, batch_size, verbose=0):
+    """Train + eval one experiment with an explicit, key-disjoint val set.
+
+    val_idx may be empty — model trains without validation_data in that case.
+    """
     T_MAX = X.shape[1]
-    X_train, X_test = X[train_idx], X[test_idx]
-    y_train, y_test = y[train_idx], y[test_idx]
+    X_train, y_train = X[train_idx], y[train_idx]
+    X_test, y_test = X[test_idx], y[test_idx]
     y_train_oh = np.eye(n_class)[y_train]
 
-    val_split = 0.1 if len(X_train) >= 10 else 0.0
+    validation_data = None
+    if len(val_idx) > 0:
+        X_val, y_val = X[val_idx], y[val_idx]
+        y_val_oh = np.eye(n_class)[y_val]
+        validation_data = (X_val, y_val_oh)
 
     model = build_model(input_shape=(T_MAX, 20, 20, n_channels), n_class=n_class)
     tf.random.set_seed(RANDOM_SEED)
@@ -61,18 +79,17 @@ def run_one(name, X, y, train_idx, test_idx, n_class, n_channels, *,
     history = model.fit(
         X_train, y_train_oh,
         batch_size=batch_size, epochs=epochs,
-        verbose=verbose, validation_split=val_split, shuffle=True,
+        verbose=verbose, validation_data=validation_data, shuffle=True,
     )
     train_time = time.time() - t0
 
     pred = np.argmax(model.predict(X_test, verbose=0), axis=-1)
     acc = float(np.mean(pred == y_test))
 
-    # Free GPU memory between experiments
     tf.keras.backend.clear_session()
 
     final_val = (float(history.history["val_accuracy"][-1])
-                 if val_split > 0 else None)
+                 if validation_data else None)
     return {
         "name": name,
         "accuracy": acc,
@@ -80,9 +97,58 @@ def run_one(name, X, y, train_idx, test_idx, n_class, n_channels, *,
         "final_train_acc": float(history.history["accuracy"][-1]),
         "final_val_acc": final_val,
         "n_train": int(len(train_idx)),
+        "n_val": int(len(val_idx)),
         "n_test": int(len(test_idx)),
         "n_class": int(n_class),
     }
+
+
+# ──────────────────────────────────────────────────────────
+# Split visualization
+# ──────────────────────────────────────────────────────────
+def plot_split_composition(manifest, splits, out_path, title):
+    """Stacked-bar figure: for each dimension, show what % of each category falls
+    into train / val / test.
+
+    splits: dict {"train": [idx...], "val": [idx...], "test": [idx...]}.
+            Indices are into ``manifest``. Empty splits are skipped.
+    """
+    splits = {k: v for k, v in splits.items() if len(v) > 0}
+    fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+    for ax, (col, label) in zip(axes.flatten(), SPLIT_DIMS):
+        counts = {sp: Counter(manifest[i][col] for i in idxs) for sp, idxs in splits.items()}
+        cats_set = set().union(*[c.keys() for c in counts.values()])
+        try:
+            cats = sorted(cats_set, key=lambda x: int(x.replace("user", "")) if col == "userid" else int(x))
+        except ValueError:
+            cats = sorted(cats_set)
+
+        cat_totals = np.array([sum(counts[sp].get(c, 0) for sp in counts) for c in cats], dtype=float)
+        x = np.arange(len(cats))
+        bottom = np.zeros(len(cats))
+        for sp in ("train", "val", "test"):
+            if sp not in counts:
+                continue
+            per = np.array([counts[sp].get(c, 0) for c in cats], dtype=float)
+            pct = np.divide(per, cat_totals, out=np.zeros_like(per), where=cat_totals > 0) * 100
+            ax.bar(x, pct, bottom=bottom, color=SPLIT_COLORS[sp], label=sp)
+            for i, p in enumerate(pct):
+                if p >= 6:
+                    ax.text(i, bottom[i] + p / 2, f"{p:.0f}%", ha="center", va="center",
+                            fontsize=8, color="white", weight="bold")
+            bottom += pct
+        ax.set_xticks(x)
+        ax.set_xticklabels(cats, rotation=0)
+        ax.set_ylim(0, 105)
+        ax.set_ylabel("% of category")
+        ax.set_title(f"{label}  (n={int(cat_totals.sum())})")
+        ax.grid(axis="y", alpha=0.3)
+        ax.legend(loc="lower right", fontsize=8)
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+    print(f"  wrote {out_path}")
 
 
 def prepare_subset(raw_bvp, motion_lbls, user_lbls, idx, task, mode):
@@ -100,30 +166,34 @@ def prepare_subset(raw_bvp, motion_lbls, user_lbls, idx, task, mode):
 # ──────────────────────────────────────────────────────────
 def run_config1(raw_bvp, motion_lbls, user_lbls, manifest, args):
     print("\n" + "=" * 60)
-    print("  Config 1: motion classification  (users 1-3, gestures 1-6)")
+    print("  Config 1: aggregate user classification  (users 1-3, gestures 1-6)")
     print("=" * 60)
 
-    idx = np.arange(len(motion_lbls))
+    idx = np.arange(len(user_lbls))
     sub_manifest = [manifest[i] for i in idx]
-    train_local, test_local = make_split_indices(
-        sub_manifest, strategy="by-key", test_frac=0.1, seed=RANDOM_SEED,
+    train_local, val_local, test_local = make_three_way_split(
+        sub_manifest, strategy="by-key", val_frac=0.1, test_frac=0.1, seed=RANDOM_SEED,
     )
-    print(f"  samples={len(idx)}  train={len(train_local)}  test={len(test_local)}")
+    print(f"  samples={len(idx)}  train={len(train_local)}  val={len(val_local)}  test={len(test_local)}")
+
+    splits_global = {"train": idx[train_local].tolist(),
+                     "val": idx[val_local].tolist(),
+                     "test": idx[test_local].tolist()}
 
     results = []
     for mode in ("bvp", "bap"):
         X, y, n_class, classes, n_ch = prepare_subset(
-            raw_bvp, motion_lbls, user_lbls, idx, task="motion", mode=mode,
+            raw_bvp, motion_lbls, user_lbls, idx, task="user", mode=mode,
         )
         res = run_one(
-            f"C1|{mode.upper()}", X, y, train_local, test_local,
+            f"C1|{mode.upper()}", X, y, train_local, val_local, test_local,
             n_class, n_ch, epochs=args.epochs, batch_size=args.batch_size, verbose=2,
         )
-        res.update({"config": 1, "mode": mode, "task": "motion",
+        res.update({"config": 1, "mode": mode, "task": "user",
                     "classes": [str(c) for c in classes]})
         results.append(res)
-        print(f"  {res['name']}: test={res['accuracy']:.4f}  ({res['train_time_s']}s)")
-    return results
+        print(f"  {res['name']}: test={res['accuracy']:.4f}  val={res['final_val_acc']:.4f}  ({res['train_time_s']}s)")
+    return results, splits_global
 
 
 # ──────────────────────────────────────────────────────────
@@ -135,30 +205,34 @@ def run_config2(raw_bvp, motion_lbls, user_lbls, manifest, args):
     print("=" * 60)
 
     results = []
+    pooled = {"train": [], "val": [], "test": []}
     for m in [1, 2, 3, 4, 5, 6]:
         idx = np.where(motion_lbls == m)[0]
         if len(idx) == 0:
             print(f"  motion {m}: no samples; skip")
             continue
         sub_manifest = [manifest[i] for i in idx]
-        train_local, test_local = make_split_indices(
-            sub_manifest, strategy="by-key", test_frac=0.1, seed=RANDOM_SEED,
+        train_local, val_local, test_local = make_three_way_split(
+            sub_manifest, strategy="by-key", val_frac=0.1, test_frac=0.1, seed=RANDOM_SEED,
         )
+        pooled["train"].extend(idx[train_local].tolist())
+        pooled["val"].extend(idx[val_local].tolist())
+        pooled["test"].extend(idx[test_local].tolist())
 
         for mode in ("bvp", "bap"):
             X, y, n_class, classes, n_ch = prepare_subset(
                 raw_bvp, motion_lbls, user_lbls, idx, task="user", mode=mode,
             )
             res = run_one(
-                f"C2|m{m}|{mode.upper()}", X, y, train_local, test_local,
+                f"C2|m{m}|{mode.upper()}", X, y, train_local, val_local, test_local,
                 n_class, n_ch, epochs=args.epochs, batch_size=args.batch_size, verbose=2,
             )
             res.update({"config": 2, "mode": mode, "task": "user", "motion": m,
                         "classes": [str(c) for c in classes]})
             results.append(res)
-            print(f"  {res['name']}: test={res['accuracy']:.4f}  "
-                  f"({res['n_train']}/{res['n_test']}, {res['train_time_s']}s)")
-    return results
+            print(f"  {res['name']}: test={res['accuracy']:.4f}  val={res['final_val_acc']:.4f}  "
+                  f"({res['n_train']}/{res['n_val']}/{res['n_test']}, {res['train_time_s']}s)")
+    return results, pooled
 
 
 # ──────────────────────────────────────────────────────────
@@ -188,15 +262,22 @@ def run_config3(raw_bvp, motion_lbls, user_lbls, manifest, args):
     print(f"  total experiments: {len(valid) * 2}\n")
 
     results = []
+    pooled = {"train": [], "val": [], "test": []}
     for cell_idx, (cell, indices) in enumerate(valid):
         m, o, l = cell
         idx_arr = np.array(indices)
 
+        # 60/20/20 random split; ensure non-empty splits even for small cells.
         rng = np.random.default_rng(RANDOM_SEED)
         perm = rng.permutation(len(idx_arr))
         n_test = max(int(round(len(idx_arr) * 0.2)), 3)
+        n_val = max(int(round(len(idx_arr) * 0.2)), 3)
         test_local = np.sort(perm[:n_test])
-        train_local = np.sort(perm[n_test:])
+        val_local = np.sort(perm[n_test:n_test + n_val])
+        train_local = np.sort(perm[n_test + n_val:])
+        pooled["train"].extend(idx_arr[train_local].tolist())
+        pooled["val"].extend(idx_arr[val_local].tolist())
+        pooled["test"].extend(idx_arr[test_local].tolist())
 
         for mode in ("bvp", "bap"):
             X, y, n_class, classes, n_ch = prepare_subset(
@@ -205,7 +286,7 @@ def run_config3(raw_bvp, motion_lbls, user_lbls, manifest, args):
             if n_class < 3:
                 continue
             res = run_one(
-                f"C3|m{m}o{o}l{l}|{mode.upper()}", X, y, train_local, test_local,
+                f"C3|m{m}o{o}l{l}|{mode.upper()}", X, y, train_local, val_local, test_local,
                 n_class, n_ch, epochs=args.epochs, batch_size=args.batch_size, verbose=0,
             )
             res.update({"config": 3, "mode": mode, "task": "user",
@@ -218,7 +299,7 @@ def run_config3(raw_bvp, motion_lbls, user_lbls, manifest, args):
             bap_accs = [r["accuracy"] for r in results if r["mode"] == "bap"]
             print(f"  [{cell_idx + 1}/{len(valid)}]  "
                   f"BVP mean={np.mean(bvp_accs):.4f}  BAP mean={np.mean(bap_accs):.4f}")
-    return results
+    return results, pooled
 
 
 # ──────────────────────────────────────────────────────────
@@ -234,8 +315,8 @@ def write_summary(out_dir, results, manifest_size):
              f"Source manifest: users 1-3, gestures 1-6, keep-all dedup ({manifest_size} samples)\n"]
 
     if "config1" in results:
-        lines.append("\n## Config 1 — Motion classification\n\n")
-        lines.append("Predict gesture (6 classes). Split: by-key, test_frac=0.1.\n\n")
+        lines.append("\n## Config 1 — Aggregate user classification\n\n")
+        lines.append("Predict user (3 classes), motion 1-6 mixed. Split: by-key 3-way, val_frac=0.1, test_frac=0.1.\n\n")
         lines.append("| Mode | Test acc | Train acc | Val acc | Time |\n|---|---|---|---|---|\n")
         for r in results["config1"]:
             lines.append(f"| {r['mode'].upper()} | {r['accuracy']:.4f} | "
@@ -244,11 +325,12 @@ def write_summary(out_dir, results, manifest_size):
 
     if "config2" in results:
         lines.append("\n## Config 2 — Per-motion user classification\n\n")
-        lines.append("Predict user (3 classes). Split: by-key, test_frac=0.1.\n\n")
-        lines.append("| Motion | Mode | Test acc | n_train | n_test |\n|---|---|---|---|---|\n")
+        lines.append("Predict user (3 classes). Split: by-key 3-way, val_frac=0.1, test_frac=0.1.\n\n")
+        lines.append("| Motion | Mode | Test acc | Val acc | n_train | n_val | n_test |\n|---|---|---|---|---|---|---|\n")
         for r in results["config2"]:
             lines.append(f"| {r['motion']} | {r['mode'].upper()} | "
-                         f"{r['accuracy']:.4f} | {r['n_train']} | {r['n_test']} |\n")
+                         f"{r['accuracy']:.4f} | {_fmt_val(r['final_val_acc'])} | "
+                         f"{r['n_train']} | {r.get('n_val', 0)} | {r['n_test']} |\n")
 
     if "config3" in results:
         rs = results["config3"]
@@ -316,26 +398,32 @@ def main():
     t_start = time.time()
 
     if 1 in configs:
-        r = run_config1(raw_bvp, motion_lbls, user_lbls, manifest, args)
+        r, splits = run_config1(raw_bvp, motion_lbls, user_lbls, manifest, args)
         all_results["config1"] = r
-        (out_dir / "config1_motion.json").write_text(json.dumps(r, indent=2))
+        (out_dir / "config1_user_aggregate.json").write_text(json.dumps(r, indent=2))
+        plot_split_composition(manifest, splits, out_dir / "config1_splits.png",
+                               "Config 1 — Aggregate (by-key 3-way split)")
 
     if 2 in configs:
-        r = run_config2(raw_bvp, motion_lbls, user_lbls, manifest, args)
+        r, splits = run_config2(raw_bvp, motion_lbls, user_lbls, manifest, args)
         all_results["config2"] = r
         (out_dir / "config2_per_motion.json").write_text(json.dumps(r, indent=2))
+        plot_split_composition(manifest, splits, out_dir / "config2_splits.png",
+                               "Config 2 — Per-motion (pooled across 6 motions)")
 
     if 3 in configs:
-        r = run_config3(raw_bvp, motion_lbls, user_lbls, manifest, args)
+        r, splits = run_config3(raw_bvp, motion_lbls, user_lbls, manifest, args)
         all_results["config3"] = r
         (out_dir / "config3_per_cell.json").write_text(json.dumps(r, indent=2))
+        plot_split_composition(manifest, splits, out_dir / "config3_splits.png",
+                               "Config 3 — Per-cell (pooled across 150 cells, random split)")
         # Flat CSV for easy downstream analysis
         with open(out_dir / "config3_all_cells.csv", "w") as f:
-            f.write("motion,orientation,location,mode,accuracy,n_train,n_test,train_time_s\n")
+            f.write("motion,orientation,location,mode,accuracy,n_train,n_val,n_test,train_time_s\n")
             for r_ in r:
                 f.write(f"{r_['motion']},{r_['orientation']},{r_['location']},"
                         f"{r_['mode']},{r_['accuracy']:.4f},{r_['n_train']},"
-                        f"{r_['n_test']},{r_['train_time_s']}\n")
+                        f"{r_['n_val']},{r_['n_test']},{r_['train_time_s']}\n")
 
     write_summary(out_dir, all_results, len(manifest))
     print(f"\n\nAll done in {(time.time() - t_start) / 60:.1f} min")

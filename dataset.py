@@ -227,3 +227,60 @@ def make_split_indices(manifest, *, strategy="by-key", test_frac=0.1, seed=42):
 
     train_idx = [i for i in range(N) if i not in test_set]
     return np.array(sorted(train_idx)), np.array(sorted(test_idx))
+
+
+def make_three_way_split(manifest, *, strategy="by-key",
+                         val_frac=0.1, test_frac=0.1, seed=42):
+    """Return ``(train_idx, val_idx, test_idx)`` — all key-disjoint when strategy='by-key'.
+
+    Fixes the multi-session leakage you'd get from ``model.fit(validation_split=...)``,
+    which carves val from train rows after the manifest-level split — val and train
+    end up sharing natural keys and the model memorizes them.
+    """
+    rng = np.random.default_rng(seed)
+    N = len(manifest)
+    if N == 0:
+        empty = np.array([], dtype=int)
+        return empty, empty, empty
+
+    if strategy == "random":
+        idx = np.arange(N)
+        rng.shuffle(idx)
+        n_test = int(round(N * test_frac))
+        n_val = int(round(N * val_frac))
+        return (np.sort(idx[n_test + n_val:]),
+                np.sort(idx[n_test:n_test + n_val]),
+                np.sort(idx[:n_test]))
+
+    if strategy == "by-key":
+        key_fn = lambda r: tuple(r[c] for c in NATURAL_KEY)
+    elif strategy == "by-session":
+        key_fn = lambda r: _internal_date(r["file"])
+    else:
+        raise ValueError(f"unknown split strategy: {strategy!r}")
+
+    buckets = defaultdict(list)
+    for i, r in enumerate(manifest):
+        buckets[key_fn(r)].append(i)
+
+    keys = sorted(buckets)
+    order = rng.permutation(len(keys))
+
+    test_target = N * test_frac
+    val_target = N * val_frac
+    test_idx, val_idx, train_idx = [], [], []
+    assigned = set()
+
+    for j in order:
+        members = buckets[keys[j]]
+        if len(test_idx) < test_target:
+            test_idx.extend(members)
+        elif len(val_idx) < val_target:
+            val_idx.extend(members)
+        else:
+            train_idx.extend(members)
+        assigned.update(members)
+
+    return (np.array(sorted(train_idx)),
+            np.array(sorted(val_idx)),
+            np.array(sorted(test_idx)))
