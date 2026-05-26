@@ -1,0 +1,74 @@
+[
+  {
+    "name": "C1|BVP",
+    "accuracy": 0.5078183172002978,
+    "train_time_s": 463.6,
+    "final_train_acc": 0.48165756464004517,
+    "final_val_acc": 0.46477824449539185,
+    "n_train": 21453,
+    "n_val": 2683,
+    "n_test": 2686,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        265,
+        599,
+        0
+      ],
+      [
+        0,
+        1099,
+        0
+      ],
+      [
+        0,
+        723,
+        0
+      ]
+    ],
+    "config": 1,
+    "mode": "bvp",
+    "task": "user",
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C1|BAP",
+    "accuracy": 0.5078183172002978,
+    "train_time_s": 469.4,
+    "final_train_acc": 0.4809117615222931,
+    "final_val_acc": 0.46477824449539185,
+    "n_train": 21453,
+    "n_val": 2683,
+    "n_test": 2686,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        265,
+        599,
+        0
+      ],
+      [
+        0,
+        1099,
+        0
+      ],
+      [
+        0,
+        723,
+        0
+      ]
+    ],
+    "config": 1,
+    "mode": "bap",
+    "task": "user",
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  }
+]

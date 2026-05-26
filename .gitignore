@@ -13,8 +13,14 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Training runs (generated)
-runs/
+# Track exp_* sweep outputs (committed experiment records);
+# ignore ad-hoc per-experiment train.py runs and the runs_archive.
+runs/*
+!runs/exp_*/
 runs_archive/
+
+# Array cache written by dataset.load_arrays — large, regenerable
+cache/
 
 # Generated analysis figures / reports
 # Track analysis/dataset/ (committed corpus distribution PNGs);

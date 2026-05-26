@@ -1,0 +1,446 @@
+[
+  {
+    "name": "C2|m1|BVP",
+    "accuracy": 0.4574468085106383,
+    "train_time_s": 72.0,
+    "final_train_acc": 0.48855775594711304,
+    "final_val_acc": 0.48195329308509827,
+    "n_train": 3758,
+    "n_val": 471,
+    "n_test": 470,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        41,
+        83,
+        31
+      ],
+      [
+        1,
+        140,
+        62
+      ],
+      [
+        3,
+        75,
+        34
+      ]
+    ],
+    "config": 2,
+    "mode": "bvp",
+    "task": "user",
+    "motion": 1,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m1|BAP",
+    "accuracy": 0.44042553191489364,
+    "train_time_s": 69.6,
+    "final_train_acc": 0.5055880546569824,
+    "final_val_acc": 0.460721880197525,
+    "n_train": 3758,
+    "n_val": 471,
+    "n_test": 470,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        43,
+        53,
+        59
+      ],
+      [
+        2,
+        96,
+        105
+      ],
+      [
+        1,
+        43,
+        68
+      ]
+    ],
+    "config": 2,
+    "mode": "bap",
+    "task": "user",
+    "motion": 1,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m2|BVP",
+    "accuracy": 0.5087336244541485,
+    "train_time_s": 64.9,
+    "final_train_acc": 0.5072424411773682,
+    "final_val_acc": 0.4803493320941925,
+    "n_train": 3659,
+    "n_val": 458,
+    "n_test": 458,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        44,
+        85,
+        27
+      ],
+      [
+        7,
+        168,
+        15
+      ],
+      [
+        6,
+        85,
+        21
+      ]
+    ],
+    "config": 2,
+    "mode": "bvp",
+    "task": "user",
+    "motion": 2,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m2|BAP",
+    "accuracy": 0.5567685589519651,
+    "train_time_s": 64.5,
+    "final_train_acc": 0.550970196723938,
+    "final_val_acc": 0.5021833777427673,
+    "n_train": 3659,
+    "n_val": 458,
+    "n_test": 458,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        92,
+        29,
+        35
+      ],
+      [
+        32,
+        128,
+        30
+      ],
+      [
+        32,
+        45,
+        35
+      ]
+    ],
+    "config": 2,
+    "mode": "bap",
+    "task": "user",
+    "motion": 2,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m3|BVP",
+    "accuracy": 0.4672489082969432,
+    "train_time_s": 60.9,
+    "final_train_acc": 0.5035538673400879,
+    "final_val_acc": 0.49563318490982056,
+    "n_train": 3658,
+    "n_val": 458,
+    "n_test": 458,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        42,
+        90,
+        24
+      ],
+      [
+        9,
+        152,
+        29
+      ],
+      [
+        4,
+        88,
+        20
+      ]
+    ],
+    "config": 2,
+    "mode": "bvp",
+    "task": "user",
+    "motion": 3,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m3|BAP",
+    "accuracy": 0.5087336244541485,
+    "train_time_s": 61.4,
+    "final_train_acc": 0.5098414421081543,
+    "final_val_acc": 0.4781659245491028,
+    "n_train": 3658,
+    "n_val": 458,
+    "n_test": 458,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        55,
+        77,
+        24
+      ],
+      [
+        17,
+        150,
+        23
+      ],
+      [
+        13,
+        71,
+        28
+      ]
+    ],
+    "config": 2,
+    "mode": "bap",
+    "task": "user",
+    "motion": 3,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m4|BVP",
+    "accuracy": 0.5235955056179775,
+    "train_time_s": 74.6,
+    "final_train_acc": 0.5122225284576416,
+    "final_val_acc": 0.5358744263648987,
+    "n_train": 3559,
+    "n_val": 446,
+    "n_test": 445,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        66,
+        87,
+        1
+      ],
+      [
+        31,
+        157,
+        2
+      ],
+      [
+        10,
+        81,
+        10
+      ]
+    ],
+    "config": 2,
+    "mode": "bvp",
+    "task": "user",
+    "motion": 4,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m4|BAP",
+    "accuracy": 0.5168539325842697,
+    "train_time_s": 74.6,
+    "final_train_acc": 0.48918235301971436,
+    "final_val_acc": 0.5246636867523193,
+    "n_train": 3559,
+    "n_val": 446,
+    "n_test": 445,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        40,
+        114,
+        0
+      ],
+      [
+        0,
+        190,
+        0
+      ],
+      [
+        0,
+        101,
+        0
+      ]
+    ],
+    "config": 2,
+    "mode": "bap",
+    "task": "user",
+    "motion": 4,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m5|BVP",
+    "accuracy": 0.5127020785219399,
+    "train_time_s": 62.2,
+    "final_train_acc": 0.5912113189697266,
+    "final_val_acc": 0.519630491733551,
+    "n_train": 3459,
+    "n_val": 433,
+    "n_test": 433,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        84,
+        28,
+        43
+      ],
+      [
+        25,
+        76,
+        76
+      ],
+      [
+        20,
+        19,
+        62
+      ]
+    ],
+    "config": 2,
+    "mode": "bvp",
+    "task": "user",
+    "motion": 5,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m5|BAP",
+    "accuracy": 0.5496535796766744,
+    "train_time_s": 64.6,
+    "final_train_acc": 0.6342873573303223,
+    "final_val_acc": 0.568129301071167,
+    "n_train": 3459,
+    "n_val": 433,
+    "n_test": 433,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        80,
+        35,
+        40
+      ],
+      [
+        16,
+        96,
+        65
+      ],
+      [
+        20,
+        19,
+        62
+      ]
+    ],
+    "config": 2,
+    "mode": "bap",
+    "task": "user",
+    "motion": 5,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m6|BVP",
+    "accuracy": 0.5666666666666667,
+    "train_time_s": 75.1,
+    "final_train_acc": 0.5442622900009155,
+    "final_val_acc": 0.5330188870429993,
+    "n_train": 3355,
+    "n_val": 424,
+    "n_test": 420,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        99,
+        54,
+        2
+      ],
+      [
+        24,
+        139,
+        1
+      ],
+      [
+        31,
+        70,
+        0
+      ]
+    ],
+    "config": 2,
+    "mode": "bvp",
+    "task": "user",
+    "motion": 6,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  },
+  {
+    "name": "C2|m6|BAP",
+    "accuracy": 0.5833333333333334,
+    "train_time_s": 75.9,
+    "final_train_acc": 0.6032786965370178,
+    "final_val_acc": 0.5660377144813538,
+    "n_train": 3355,
+    "n_val": 424,
+    "n_test": 420,
+    "n_class": 3,
+    "confusion_matrix": [
+      [
+        81,
+        44,
+        30
+      ],
+      [
+        14,
+        127,
+        23
+      ],
+      [
+        31,
+        33,
+        37
+      ]
+    ],
+    "config": 2,
+    "mode": "bap",
+    "task": "user",
+    "motion": 6,
+    "classes": [
+      "user1",
+      "user2",
+      "user3"
+    ]
+  }
+]
